@@ -1,0 +1,44 @@
+name: "aoraki-labs zkpool-demo-relayer service"
+version: "0.1.0"
+about: zkpool-demo-relayer
+authors: "zkpool_satoshi@aoraki-labs.io"
+
+# AppSettings can be defined as a list and are **not** ascii case sensitive
+settings:
+    - ColoredHelp
+
+# All subcommands must be listed in the 'subcommand:' object, where the key to
+# the list is the name of the subcommand, and all settings for that command are
+# are part of a Hash
+args:
+    - key:
+          short: k
+          long: key
+          help: Set the private key to sign the blockchain request
+          takes_value: true
+          default_value: "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    - api:
+          short: a
+          long: api
+          help: Set the self server api endpoint
+          takes_value: true
+          default_value: "0.0.0.0:6789"
+    - scheduler:
+          short: s
+          long: scheduler
+          help: The scheduler rpc endpoint
+          takes_value: true
+          default_value: "http://35.201.232.215:18080/new-task"
+    - start_num:
+          short: b
+          long: start_num
+          help: The start block num when start relayer
+          takes_value: true
+          default_value: "0"
+    - contract:
+          short: c
+          long: contract
+          help: ZKPool demo contract
+          takes_value: true
+          default_value: "62BEAbfF6BEAFe3c535173239d2c2a400E5EF0e5"
+    
