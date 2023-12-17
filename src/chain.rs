@@ -45,6 +45,10 @@ use web3::{
 
 use web3::types::BlockNumber::Pending;
 // use std::time::{SystemTime, UNIX_EPOCH};
+// use diesel::prelude::*;
+// use diesel::pg::PgConnection;
+// use dotenv::dotenv;
+// use std::env;
 
 lazy_static! {
     pub static ref PROOF_MSG_QUEUE: Arc<tokio::sync::Mutex<VecDeque<ProofMessage>>> = {
@@ -68,7 +72,12 @@ lazy_static! {
     pub static ref TASK_KEY_CACHE: Arc<Mutex<HashMap<String, String>>> = {
       Arc::new(Mutex::new(HashMap::default()))
     };
+    pub static ref TASK_INFO: Arc<Mutex<HashMap<String, TaskInfo>>> = {
+      Arc::new(Mutex::new(HashMap::new()))
+    };
 }
+
+const SEG_NUM: i32 = 5;
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct ProofMessage {
@@ -111,6 +120,37 @@ struct RpcResponse {
     jsonrpc: String,
     result: String,
     id: u64,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum TaskStatus {
+    Proving,
+    Proven,
+}
+
+impl TaskStatus {
+  pub fn as_str(&self) -> &str {
+      match self {
+          TaskStatus::Proving => "proving",
+          TaskStatus::Proven => "proven",
+      }
+  }
+
+  pub fn from_str(s: &str) -> Option<Self> {
+      match s {
+          "proving" => Some(TaskStatus::Proving),
+          "proven" => Some(TaskStatus::Proven),
+          _ => None,
+      }
+  }
+}
+
+#[derive(Clone, Debug)]
+pub struct TaskInfo {
+    pub project_id: String,
+    pub task_id: String,
+    pub split_id: String,
+    pub status: TaskStatus,
 }
 
 use crate::ok_or_continue;
@@ -633,6 +673,31 @@ const MATIC_CONTRACT_ABI:&[u8] = r#"[
     }
   ]"#.as_bytes();
 
+  pub async fn update_task_status(project_id: &str, task_id: &str, split_id: &str, new_status: &str) -> Result<(), String> {
+    let mut task_info_map = TASK_INFO.lock().await;
+    let key = format!("{}-{}-{}", project_id, task_id, split_id);
+    match TaskStatus::from_str(new_status) {
+        Some(status_enum) => {
+            let task_info = task_info_map.entry(key)
+                .or_insert_with(|| TaskInfo {
+                    project_id: project_id.to_string(),
+                    task_id: task_id.to_string(),
+                    split_id: split_id.to_string(),
+                    status: TaskStatus::Proving, // 默认状态
+                });
+            task_info.status = status_enum;
+            Ok(())
+        },
+        None => Err("Invalid status".to_string()),
+    }
+}
+
+pub async fn get_task_status(project_id: &str, task_id: &str, split_id: &str) -> Option<String> {
+    let task_info_map = TASK_INFO.lock().await;
+    let key = format!("{}-{}-{}", project_id, task_id, split_id);
+    task_info_map.get(&key).map(|task_info| task_info.status.as_str().to_string())
+}
+
 
 pub fn get_current_block_num() -> Option<u64>{
     let mut writer1 = Vec::new(); 
@@ -676,6 +741,36 @@ pub fn get_current_block_num() -> Option<u64>{
     }
 }
 
+// pub fn establish_connection() -> PgConnection {
+//   dotenv().ok();
+
+//   let database_url = env::var("DATABASE_URL")
+//       .expect("DATABASE_URL must be set");
+//   PgConnection::establish(&database_url)
+//       .expect(&format!("Error connecting to {}", database_url))
+// }
+
+// pub fn insert_task_data(conn: &PgConnection, project_id: &str, task_id: &str, idx: i32) -> QueryResult<usize> {
+//   use crate::schema::tasks;
+
+//   let new_task = Task {
+//       id: 0,
+//       project_id: project_id.to_owned(),
+//       task_id: task_id.to_owned(),
+//       idx,
+//       status: "unprover".to_owned(),
+//   };
+
+//   diesel::insert_into(tasks::table)
+//       .values(&new_task)
+//       .execute(conn)
+// }
+
+// pub fn get_task_data(conn: &PgConnection) -> QueryResult<Vec<Task>> {
+//   use crate::schema::tasks::dsl::*;
+
+//   tasks.load::<Task>(conn)
+// }
 
 /// get the account nonce value
 pub async fn get_nonce(address:String) -> U256{
@@ -924,15 +1019,56 @@ pub async fn add_proof_info(event: &ethabi::Event, temp: &mut EmitProvenTaskMess
 
 ///no need to verify onchain
 pub async fn process_proof_data(msg: &ProofMessage){  
-
-    match submit_proof(hex::decode(msg.task_id.clone()).unwrap(), Bytes::from(msg.proof.clone())).await{
+  let tasks: Vec<&str> = msg.task_id.split("#").collect();
+  if tasks.len() == 1 {
+      // whole proof
+      let task_id = tasks[0];
+      match submit_proof(hex::decode(task_id).unwrap(), Bytes::from(msg.proof.clone())).await{
         Ok(r) => {
-            info!("****** sbumit task_key:{} proof tx success,tx hash is: {}",msg.task_id,r)
+            info!("****** sbumit task_key:{} proof tx success,tx hash is: {}",task_id,r)
         },
         Err(_) => {
             error!("sbumit proof tx failed")
         },
-    };
+      };
+    } else if tasks.len() == 2 {
+      // segement proof
+
+      let task_id = tasks[0];
+      let split_id = tasks[1];
+
+      let task_info_map = TASK_INFO.lock().await;
+      let key = format!("{}-{}-{}", task_id, split_id, msg.degree);
+      let task_info = task_info_map.get(&key).unwrap();
+      if task_info.status == TaskStatus::Proven {
+          return;
+      }
+      update_task_status(&task_info.project_id, &task_info.task_id, &task_info.split_id, "proven").await.unwrap();
+      let mut all_proven = true;
+      for i in 0..SEG_NUM {
+          let key = format!("{}-{}-{}", task_info.project_id, task_info.task_id, i);
+          let task_info = task_info_map.get(&key).unwrap();
+          if task_info.status != TaskStatus::Proven {
+              all_proven = false;
+              break;
+          }
+      }
+      if all_proven {
+        match submit_proof(hex::decode(task_id).unwrap(), Bytes::from(msg.proof.clone())).await{
+            Ok(r) => {
+                info!("****** sbumit task_key:{} proof tx success,tx hash is: {}",task_id,r)
+            },
+            Err(_) => {
+                error!("sbumit proof tx failed")
+            },
+        };
+      }
+
+    } else {
+      // assert here
+      panic!("block format error");
+    }
+
 }
 
 pub async fn receive_task(instance:String,task_key:String){
@@ -954,6 +1090,13 @@ pub async fn loop_task_data() -> web3::Result<()> {
 
 ///send the task to scheduler
 pub async fn  process_task_data(msg: &ProvenTaskMessage)-> bool{  
+    // Split the task if necessary, there is a for loop
+
+    // There are two Solutions:
+    // 1: Run executor of r0vm, get segments and send segments to the scheduler (TODO)
+    // A strategy to define how much segments there should be (TODO)
+    // 2: or, hardcode for now: 4 segments, and send the id
+
     // let task_id = SystemTime::now()
     // .duration_since(UNIX_EPOCH)
     // .unwrap()
@@ -963,53 +1106,51 @@ pub async fn  process_task_data(msg: &ProvenTaskMessage)-> bool{
     // let task_key_temp = TASK_KEY_CACHE.clone();
     // let mut task_key_map = task_key_temp.lock().await;
     // task_key_map.insert((task_id%10000).to_string(), msg.task_key.clone());
+    for split_id in 0..SEG_NUM {
+      // Concat msg.task_key and split_id string with # charater, and get a new msg.task_key
+      let new_task_key = format!("{}#{}", msg.task_key, split_id.to_string());
 
-    let request = RpcRequest {
-        jsonrpc: "2.0".to_string(),
-        method: "DelieveTask".to_string(),
-        // params: vec!["demo".to_string(),(task_id%10000).to_string(),msg.instance.clone(),"1".to_string()], 
-        params: vec!["demo".to_string(),msg.task_key.clone(),msg.instance.clone(),"1".to_string()], 
-        id: "1".to_string(),
-    };
+      let request = RpcRequest {
+          jsonrpc: "2.0".to_string(),
+          method: "DelieveTask".to_string(),
+          params: vec!["demo".to_string(),new_task_key,msg.instance.clone(),"1".to_string()],
+          id: "1".to_string(),
+      };
 
-    let mut writer_buffer = Vec::new(); 
-    let mut retry = 0 ;
+      let mut writer_buffer = Vec::new();
+      let mut retry = 0 ;
 
-    let scheduler_url = SCHEDULER_URL.lock().await;
-    let scheduler_endpoint = (*scheduler_url).clone();
-    info!("try to send task key:{:?},proof task:{:?} to scheduler service:{:?}",msg.task_key.clone(),msg.instance,scheduler_endpoint.clone());
-    loop{
-        if retry==1 {
-            error!("send task to scheduler error of msg :{:?}", msg.clone());
-            return false
+      let scheduler_url = SCHEDULER_URL.lock().await;
+      let scheduler_endpoint = (*scheduler_url).clone();
+      info!("try to send task key:{:?},proof task:{}, split id:{:?} to scheduler service:{:?}",msg.task_key.clone(),msg.instance,split_id,scheduler_endpoint.clone());
+      loop{
+          if retry==1 {
+              error!("send task to scheduler error of msg :{:?}", msg.clone());
+              return false
+          }
+          writer_buffer.clear();
+
+          let parameter_string=serde_json::to_string(&request).unwrap();
+
+          let uri: Uri = Uri::try_from(scheduler_endpoint.as_str()).unwrap();
+          let _res= match Request::new(&uri)
+              .method(Method::POST)
+              .header("Content-Type", "application/json")
+              .header("Content-Length", &parameter_string.as_bytes().len())
+              .body(parameter_string.as_bytes())
+              .send(&mut writer_buffer){
+                  Ok(r) => { r },
+                  Err(_) => {
+                      retry=retry+1;
+                      continue;
+                  },
+              };
+          let content = str::from_utf8(&writer_buffer).unwrap();
+          info!("send result is {:?}",content);
+          break;
         }
-        writer_buffer.clear();
-
-        let parameter_string=serde_json::to_string(&request).unwrap();
-
-        let uri: Uri = Uri::try_from(scheduler_endpoint.as_str()).unwrap();
-        let _res= match Request::new(&uri)
-            .method(Method::POST)
-            .header("Content-Type", "application/json")
-            .header("Content-Length", &parameter_string.as_bytes().len())
-            .body(parameter_string.as_bytes())
-            .send(&mut writer_buffer){
-                Ok(r) => { r },
-                Err(_) => {
-                    retry=retry+1;
-                    continue;
-                },
-            };
-        let content = str::from_utf8(&writer_buffer).unwrap();
-        info!("send result is {:?}",content);
-        return true
+      // call update_task_status
+      update_task_status("demo", msg.task_key.as_str(), split_id.to_string().as_str(), "proving").await.unwrap();
     }
+  return true
 }
-
-
-
-
-
-
-  
-  
