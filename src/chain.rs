@@ -77,7 +77,7 @@ lazy_static! {
     };
 }
 
-const SEG_NUM: i32 = 5;
+const SEG_NUM: i32 = 4;
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct ProofMessage {
