@@ -1038,7 +1038,7 @@ pub async fn process_proof_data(msg: &ProofMessage){
       let split_id = tasks[1];
 
       let task_info_map = TASK_INFO.lock().await;
-      let key = format!("{}-{}-{}", task_id, split_id, msg.degree);
+      let key = format!("{}-{}-{}", "demo", task_id, split_id);
       let task_info = task_info_map.get(&key).unwrap();
       if task_info.status == TaskStatus::Proven {
           return;
