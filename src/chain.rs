@@ -1039,11 +1039,13 @@ pub async fn process_proof_data(msg: &ProofMessage){
 
       let task_info_map = TASK_INFO.lock().await;
       let key = format!("{}-{}-{}", "demo", task_id, split_id);
-      let task_info = task_info_map.get(&key).unwrap();
+      let task_info = task_info_map.get(&key).unwrap().clone();
       if task_info.status == TaskStatus::Proven {
           return;
       }
+      drop(task_info_map);
       update_task_status(&task_info.project_id, &task_info.task_id, &task_info.split_id, "proven").await.unwrap();
+      let task_info_map = TASK_INFO.lock().await;
       let mut all_proven = true;
       for i in 0..SEG_NUM {
           let key = format!("{}-{}-{}", task_info.project_id, task_info.task_id, i);
