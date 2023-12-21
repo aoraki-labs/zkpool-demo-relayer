@@ -1019,7 +1019,7 @@ pub async fn add_proof_info(event: &ethabi::Event, temp: &mut EmitProvenTaskMess
 
 ///no need to verify onchain
 pub async fn process_proof_data(msg: &ProofMessage){  
-  let tasks: Vec<&str> = msg.task_id.split("#").collect();
+  let tasks: Vec<&str> = msg.task_id.split("@").collect();
   if tasks.len() == 1 {
       // whole proof
       let task_id = tasks[0];
@@ -1110,7 +1110,7 @@ pub async fn  process_task_data(msg: &ProvenTaskMessage)-> bool{
     // task_key_map.insert((task_id%10000).to_string(), msg.task_key.clone());
     for split_id in 0..SEG_NUM {
       // Concat msg.task_key and split_id string with # charater, and get a new msg.task_key
-      let new_task_key = format!("{}#{}", msg.task_key, split_id.to_string());
+      let new_task_key = format!("{}@{}", msg.task_key, split_id.to_string());
 
       let request = RpcRequest {
           jsonrpc: "2.0".to_string(),
