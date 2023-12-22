@@ -26,6 +26,9 @@ use ethers_signers::{Wallet,Signer};
 use crate::chain::{get_current_block_num, ProofMessage, PROOF_MSG_QUEUE, process_proof_data, PRIV_KEY};
 use std::str::FromStr;
 use ethereum_private_key_to_address::PrivateKey;
+use crate::db::*;
+use crate::models::NewSmallProof;
+use crate::chain::{SEG_NUM, update_proof_response};
 
 
 #[derive(Debug, Serialize, Deserialize,Default)]
@@ -39,6 +42,14 @@ struct TaskResponse {
     pub liability: u64,
     pub expiry: u64,
     pub signature: String,
+}
+
+#[derive(Debug, Serialize, Deserialize,Default)]
+pub struct ProofResponse {
+    pub task_id: String,
+    pub project_id: String,
+    pub status: String,
+    pub small_proofs: Vec<NewSmallProof>,
 }
 
 pub async fn start_rpc_server(addr:String) -> jsonrpc_http_server::Server {
@@ -141,7 +152,6 @@ pub async fn start_rpc_server(addr:String) -> jsonrpc_http_server::Server {
         res.signature=hex::encode(signature.clone());
 
         Ok(Value::String(serde_json::to_string(&res).unwrap()))
-        
     });
 
     io.add_method("demo/SendProofBack", |params: Params| async {
@@ -179,6 +189,52 @@ pub async fn start_rpc_server(addr:String) -> jsonrpc_http_server::Server {
         Ok(Value::String("success".to_string()))
         
     }); 
+
+    io.add_method("demo/QueryProofs", |params: Params| async {
+        info!("****** QueryProofs msg ******");
+        let req_input: Vec<Value> = match params.parse(){
+            Ok(r) => r,
+            Err(_) => {
+                return Ok(Value::String("parameter invalid".to_string()))
+            },
+        };
+        if req_input.len() != 1 {
+            return Ok(Value::String("parameter invalid".to_string()))
+        }
+
+        //task param
+        let task_id = if  let Value::String(func_input)=req_input[0].clone(){
+            func_input
+        }else{
+            return Ok(Value::String("parameter invalid".to_string()))
+        };
+
+        // get result and return
+        let mut res:ProofResponse=ProofResponse::default();
+
+        #[cfg(feature = "local")]
+        {
+            match update_proof_response("demo", &task_id).await {
+                Ok(proof_response) => {
+                    res = proof_response;
+                },
+                Err(e) => eprintln!("Error updating proof response: {}", e),
+            }
+        }
+
+        #[cfg(feature = "DB")]
+        {
+            // // 从db.rs中根据上面的task_id参数和"demo"作为project_id, 调用get_big_proof_status函数和get_small_proof_status_and_percentage函数获取big_proof和对应small_proof
+            // res.big_proof = get_big_proof_status("demo", task_id);
+            // // 循环SEG_NUM 次，以“demo”作为project_id, task_id作为task_id, i作为task_split_id, 调用get_small_proof_status_and_percentage函数获取small_proof
+            // for i in 0..SEG_NUM {
+            //     res.small_proof.push(get_small_proof_status_and_percentage("demo", task_id, i.to_string()));
+            // }
+        }
+
+        Ok(Value::String(serde_json::to_string(&res).unwrap()))
+        
+    });
     info!("start the server on :{}",addr.clone());
     let server = ServerBuilder::new(io)
         .threads(4)

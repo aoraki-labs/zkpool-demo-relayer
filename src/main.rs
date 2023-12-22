@@ -23,8 +23,10 @@ use web3::ethabi::Bytes;
 
 mod server;
 mod chain;
+mod db;
+mod models;
+mod schema;
 use crate::{server::start_rpc_server, chain::{PRIV_KEY, SCHEDULER_URL, CONTRACT, get_current_block_num}};
-
 
 #[macro_use]
 mod app_marco;

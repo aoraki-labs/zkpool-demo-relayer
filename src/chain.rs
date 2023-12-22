@@ -13,42 +13,39 @@
 // You should have received a copy of the GNU General Public License
 // along with the aoraki-labs library. If not, see <https://www.gnu.org/licenses/>.
 
-
-use std::collections::HashMap;
 use std::str::FromStr;
-use std::sync::Arc;
 use ethereum_private_key_to_address::PrivateKey;
 use log::*;
-use tokio::sync::Mutex;
 use web3::ethabi::FixedBytes;
 use std::thread;
 use std::time;
 use core::str;
 use rand::seq::SliceRandom;
 use serde_derive::{Deserialize,Serialize};
-
 use reqwest::{Client, Url};
 use http_req::request::{Request, Method};
+use web3::types::BlockNumber::Pending;
+use std::collections::HashMap;
+use std::sync::Arc;
+use tokio::sync::Mutex;
 use http_req::uri::Uri;
-
 use lazy_static::lazy_static;
 use std::collections::VecDeque;
-
 use web3::{
-    Web3,
-    ethabi,
-    transports::Http,
-    types,
-    ethabi::{ethereum_types::U256,Function, ParamType, Param, StateMutability, Token},
-    types::{Address,Bytes, TransactionParameters}, 
+  Web3,
+  ethabi,
+  transports::Http,
+  types,
+  ethabi::{ethereum_types::U256,Function, ParamType, Param, StateMutability, Token},
+  types::{Address,Bytes, TransactionParameters},
 };
-
-use web3::types::BlockNumber::Pending;
-// use std::time::{SystemTime, UNIX_EPOCH};
-// use diesel::prelude::*;
-// use diesel::pg::PgConnection;
-// use dotenv::dotenv;
-// use std::env;
+use diesel::pg::PgConnection;
+use diesel::prelude::*;
+use dotenvy::dotenv;
+use std::env;
+use crate::db::*;
+use crate::models::*;
+use crate::server::ProofResponse;
 
 lazy_static! {
     pub static ref PROOF_MSG_QUEUE: Arc<tokio::sync::Mutex<VecDeque<ProofMessage>>> = {
@@ -72,12 +69,12 @@ lazy_static! {
     pub static ref TASK_KEY_CACHE: Arc<Mutex<HashMap<String, String>>> = {
       Arc::new(Mutex::new(HashMap::default()))
     };
-    pub static ref TASK_INFO: Arc<Mutex<HashMap<String, TaskInfo>>> = {
+    pub static ref TASK_INFO: Arc<tokio::sync::Mutex<HashMap<String, TaskInfo>>> = {
       Arc::new(Mutex::new(HashMap::new()))
     };
 }
 
-const SEG_NUM: i32 = 4;
+pub const SEG_NUM: i32 = 4;
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct ProofMessage {
@@ -683,7 +680,7 @@ const MATIC_CONTRACT_ABI:&[u8] = r#"[
                     project_id: project_id.to_string(),
                     task_id: task_id.to_string(),
                     split_id: split_id.to_string(),
-                    status: TaskStatus::Proving, // 默认状态
+                    status: TaskStatus::Proving,
                 });
             task_info.status = status_enum;
             Ok(())
@@ -696,6 +693,52 @@ pub async fn get_task_status(project_id: &str, task_id: &str, split_id: &str) ->
     let task_info_map = TASK_INFO.lock().await;
     let key = format!("{}-{}-{}", project_id, task_id, split_id);
     task_info_map.get(&key).map(|task_info| task_info.status.as_str().to_string())
+}
+
+pub async fn update_proof_response(project_id: &str, task_id: &str) -> Result<ProofResponse, String> {
+  let task_info_map = TASK_INFO.lock().await;
+  let mut small_proofs = Vec::new();
+  let mut all_proven = true;
+
+  for split_id in 0..SEG_NUM {
+      let key = format!("{}-{}-{}", project_id, task_id, split_id);
+      let status = match task_info_map.get(&key) {
+          Some(task_info) => {
+              if task_info.status != TaskStatus::Proven {
+                  all_proven = false;
+              }
+              format!("{:?}", task_info.status)
+          },
+          None => {
+              all_proven = false;
+              "created".to_string()
+          },
+      };
+      let task_percentage = 1.0 / SEG_NUM as f64;
+
+      small_proofs.push(NewSmallProof {
+          project_id: project_id.to_string(),
+          task_id: task_id.to_string(),
+          task_split_id: split_id.to_string(),
+          task_percentage,
+          status,
+      });
+  }
+
+  let overall_status = if all_proven {
+      "proven".to_string()
+  } else if small_proofs.iter().any(|sp| sp.status != "created") {
+      "proving".to_string()
+  } else {
+      "created".to_string()
+  };
+
+  Ok(ProofResponse {
+      task_id: task_id.to_string(),
+      project_id: project_id.to_string(),
+      status: overall_status,
+      small_proofs,
+  })
 }
 
 
@@ -740,37 +783,6 @@ pub fn get_current_block_num() -> Option<u64>{
         }  
     }
 }
-
-// pub fn establish_connection() -> PgConnection {
-//   dotenv().ok();
-
-//   let database_url = env::var("DATABASE_URL")
-//       .expect("DATABASE_URL must be set");
-//   PgConnection::establish(&database_url)
-//       .expect(&format!("Error connecting to {}", database_url))
-// }
-
-// pub fn insert_task_data(conn: &PgConnection, project_id: &str, task_id: &str, idx: i32) -> QueryResult<usize> {
-//   use crate::schema::tasks;
-
-//   let new_task = Task {
-//       id: 0,
-//       project_id: project_id.to_owned(),
-//       task_id: task_id.to_owned(),
-//       idx,
-//       status: "unprover".to_owned(),
-//   };
-
-//   diesel::insert_into(tasks::table)
-//       .values(&new_task)
-//       .execute(conn)
-// }
-
-// pub fn get_task_data(conn: &PgConnection) -> QueryResult<Vec<Task>> {
-//   use crate::schema::tasks::dsl::*;
-
-//   tasks.load::<Task>(conn)
-// }
 
 /// get the account nonce value
 pub async fn get_nonce(address:String) -> U256{
@@ -1022,6 +1034,8 @@ pub async fn process_proof_data(msg: &ProofMessage){
   let tasks: Vec<&str> = msg.task_id.split("#").collect();
   if tasks.len() == 1 {
       // whole proof
+      set_big_proof_status("demo", &msg.task_id, "proven").await.unwrap();
+
       let task_id = tasks[0];
       match submit_proof(hex::decode(task_id).unwrap(), Bytes::from(msg.proof.clone())).await{
         Ok(r) => {
@@ -1031,6 +1045,8 @@ pub async fn process_proof_data(msg: &ProofMessage){
             error!("sbumit proof tx failed")
         },
       };
+
+      set_big_proof_status("demo", &msg.task_id, "submitted").await.unwrap();
     } else if tasks.len() == 2 {
       // segement proof
 
@@ -1043,6 +1059,8 @@ pub async fn process_proof_data(msg: &ProofMessage){
       if task_info.status == TaskStatus::Proven {
           return;
       }
+
+      set_small_proof_status_and_percentage("demo", &task_info.task_id, &task_info.split_id, "proven", 1.0/SEG_NUM as f64).await.unwrap();
       update_task_status(&task_info.project_id, &task_info.task_id, &task_info.split_id, "proven").await.unwrap();
       let mut all_proven = true;
       for i in 0..SEG_NUM {
@@ -1054,8 +1072,10 @@ pub async fn process_proof_data(msg: &ProofMessage){
           }
       }
       if all_proven {
+        set_big_proof_status("demo", &task_info.task_id, "proven").await.unwrap();
         match submit_proof(hex::decode(task_id).unwrap(), Bytes::from(msg.proof.clone())).await{
             Ok(r) => {
+                set_big_proof_status("demo", &task_info.task_id, "submitted").await.unwrap();
                 info!("****** sbumit task_key:{} proof tx success,tx hash is: {}",task_id,r)
             },
             Err(_) => {
@@ -1068,7 +1088,6 @@ pub async fn process_proof_data(msg: &ProofMessage){
       // assert here
       panic!("block format error");
     }
-
 }
 
 pub async fn receive_task(instance:String,task_key:String){
@@ -1106,7 +1125,12 @@ pub async fn  process_task_data(msg: &ProvenTaskMessage)-> bool{
     // let task_key_temp = TASK_KEY_CACHE.clone();
     // let mut task_key_map = task_key_temp.lock().await;
     // task_key_map.insert((task_id%10000).to_string(), msg.task_key.clone());
+
+    add_big_proof("demo", &msg.task_key).await.unwrap();
+
     for split_id in 0..SEG_NUM {
+      add_small_proof("demo", &msg.task_key, &split_id.to_string()).await.unwrap();
+
       // Concat msg.task_key and split_id string with # charater, and get a new msg.task_key
       let new_task_key = format!("{}#{}", msg.task_key, split_id.to_string());
 
@@ -1151,6 +1175,9 @@ pub async fn  process_task_data(msg: &ProvenTaskMessage)-> bool{
         }
       // call update_task_status
       update_task_status("demo", msg.task_key.as_str(), split_id.to_string().as_str(), "proving").await.unwrap();
+      // call set_small_proof_status_and_percentage and set status as proving and percentage is 1/SEG_NUM
+      set_small_proof_status_and_percentage("demo", msg.task_key.as_str(), split_id.to_string().as_str(), "proving", 1.0/SEG_NUM as f64).await.unwrap();
     }
+  set_big_proof_status("demo", msg.task_key.as_str(), "proving").await.unwrap();
   return true
 }
