@@ -699,30 +699,30 @@ pub async fn update_proof_response(project_id: &str, task_id: &str) -> Result<Pr
   let task_info_map = TASK_INFO.lock().await;
   let mut small_proofs = Vec::new();
   let mut all_proven = true;
+  let mut found = false;
 
   for split_id in 0..SEG_NUM {
       let key = format!("{}-{}-{}", project_id, task_id, split_id);
-      let status = match task_info_map.get(&key) {
-          Some(task_info) => {
-              if task_info.status != TaskStatus::Proven {
-                  all_proven = false;
-              }
-              format!("{:?}", task_info.status)
-          },
-          None => {
+      if let Some(task_info) = task_info_map.get(&key) {
+          found = true;
+          if task_info.status != TaskStatus::Proven {
               all_proven = false;
-              "created".to_string()
-          },
-      };
-      let task_percentage = 1.0 / SEG_NUM as f64;
+          }
+          let status = format!("{:?}", task_info.status);
+          let task_percentage = 1.0 / SEG_NUM as f64;
 
-      small_proofs.push(NewSmallProof {
-          project_id: project_id.to_string(),
-          task_id: task_id.to_string(),
-          task_split_id: split_id.to_string(),
-          task_percentage,
-          status,
-      });
+          small_proofs.push(NewSmallProof {
+              project_id: project_id.to_string(),
+              task_id: task_id.to_string(),
+              task_split_id: split_id.to_string(),
+              task_percentage,
+              status,
+          });
+      }
+  }
+
+  if !found {
+      return Ok(ProofResponse::default());
   }
 
   let overall_status = if all_proven {
@@ -740,7 +740,6 @@ pub async fn update_proof_response(project_id: &str, task_id: &str) -> Result<Pr
       small_proofs,
   })
 }
-
 
 pub fn get_current_block_num() -> Option<u64>{
     let mut writer1 = Vec::new(); 
@@ -1026,15 +1025,16 @@ pub async fn add_proof_info(event: &ethabi::Event, temp: &mut EmitProvenTaskMess
     info!("receive the proof info need to be proven :{:?}",temp);
     receive_task(temp.instance.clone(), temp.task_key.clone()).await;
     Ok(())
-  }
-
-
+}
 ///no need to verify onchain
 pub async fn process_proof_data(msg: &ProofMessage){  
   let tasks: Vec<&str> = msg.task_id.split("@").collect();
   if tasks.len() == 1 {
-      // whole proof
-      set_big_proof_status("demo", &msg.task_id, "proven").await.unwrap();
+      #[cfg(feature = "DB")]
+      {
+          // whole proof
+          set_big_proof_status("demo", &msg.task_id, "proven").await.unwrap();
+      }
 
       let task_id = tasks[0];
       match submit_proof(hex::decode(task_id).unwrap(), Bytes::from(msg.proof.clone())).await{
