@@ -1045,8 +1045,10 @@ pub async fn process_proof_data(msg: &ProofMessage){
             error!("sbumit proof tx failed")
         },
       };
-
-      set_big_proof_status("demo", &msg.task_id, "submitted").await.unwrap();
+      #[cfg(feature = "DB")]
+      {
+          set_big_proof_status("demo", &msg.task_id, "submitted").await.unwrap();
+      }
     } else if tasks.len() == 2 {
       // segement proof
 
@@ -1061,7 +1063,10 @@ pub async fn process_proof_data(msg: &ProofMessage){
       }
       drop(task_info_map);
 
-      set_small_proof_status_and_percentage("demo", &task_info.task_id, &task_info.split_id, "proven", 1.0/SEG_NUM as f64).await.unwrap();
+      #[cfg(feature = "DB")]
+      {
+          set_small_proof_status_and_percentage("demo", &task_info.task_id, &task_info.split_id, "proven", 1.0/SEG_NUM as f64).await.unwrap();
+      }
       update_task_status(&task_info.project_id, &task_info.task_id, &task_info.split_id, "proven").await.unwrap();
       let task_info_map = TASK_INFO.lock().await;
       let mut all_proven = true;
@@ -1074,10 +1079,16 @@ pub async fn process_proof_data(msg: &ProofMessage){
           }
       }
       if all_proven {
-        set_big_proof_status("demo", &task_info.task_id, "proven").await.unwrap();
+        #[cfg(feature = "DB")]
+        {
+           set_big_proof_status("demo", &task_info.task_id, "proven").await.unwrap();
+        }
         match submit_proof(hex::decode(task_id).unwrap(), Bytes::from(msg.proof.clone())).await{
             Ok(r) => {
-                set_big_proof_status("demo", &task_info.task_id, "submitted").await.unwrap();
+                #[cfg(feature = "DB")]
+                {
+                    set_big_proof_status("demo", &task_info.task_id, "submitted").await.unwrap();
+                }
                 info!("****** sbumit task_key:{} proof tx success,tx hash is: {}",task_id,r)
             },
             Err(_) => {
@@ -1127,11 +1138,16 @@ pub async fn  process_task_data(msg: &ProvenTaskMessage)-> bool{
     // let task_key_temp = TASK_KEY_CACHE.clone();
     // let mut task_key_map = task_key_temp.lock().await;
     // task_key_map.insert((task_id%10000).to_string(), msg.task_key.clone());
-
-    add_big_proof("demo", &msg.task_key).await.unwrap();
+    #[cfg(feature = "DB")]
+    {
+        add_big_proof("demo", &msg.task_key).await.unwrap();
+    }
 
     for split_id in 0..SEG_NUM {
-      add_small_proof("demo", &msg.task_key, &split_id.to_string()).await.unwrap();
+      #[cfg(feature = "DB")]
+      {
+          add_small_proof("demo", &msg.task_key, &split_id.to_string()).await.unwrap();
+      }
 
       // Concat msg.task_key and split_id string with # charater, and get a new msg.task_key
       let new_task_key = format!("{}@{}", msg.task_key, split_id.to_string());
@@ -1177,9 +1193,15 @@ pub async fn  process_task_data(msg: &ProvenTaskMessage)-> bool{
         }
       // call update_task_status
       update_task_status("demo", msg.task_key.as_str(), split_id.to_string().as_str(), "proving").await.unwrap();
-      // call set_small_proof_status_and_percentage and set status as proving and percentage is 1/SEG_NUM
-      set_small_proof_status_and_percentage("demo", msg.task_key.as_str(), split_id.to_string().as_str(), "proving", 1.0/SEG_NUM as f64).await.unwrap();
+      #[cfg(feature = "DB")]
+      {
+        // call set_small_proof_status_and_percentage and set status as proving and percentage is 1/SEG_NUM
+        set_small_proof_status_and_percentage("demo", msg.task_key.as_str(), split_id.to_string().as_str(), "proving", 1.0/SEG_NUM as f64).await.unwrap();
+      }
     }
-  set_big_proof_status("demo", msg.task_key.as_str(), "proving").await.unwrap();
+    #[cfg(feature = "DB")]
+    { 
+        set_big_proof_status("demo", msg.task_key.as_str(), "proving").await.unwrap();
+    }
   return true
 }
