@@ -1031,7 +1031,7 @@ pub async fn add_proof_info(event: &ethabi::Event, temp: &mut EmitProvenTaskMess
 
 ///no need to verify onchain
 pub async fn process_proof_data(msg: &ProofMessage){  
-  let tasks: Vec<&str> = msg.task_id.split("#").collect();
+  let tasks: Vec<&str> = msg.task_id.split("@").collect();
   if tasks.len() == 1 {
       // whole proof
       set_big_proof_status("demo", &msg.task_id, "proven").await.unwrap();
@@ -1055,13 +1055,15 @@ pub async fn process_proof_data(msg: &ProofMessage){
 
       let task_info_map = TASK_INFO.lock().await;
       let key = format!("{}-{}-{}", "demo", task_id, split_id);
-      let task_info = task_info_map.get(&key).unwrap();
+      let task_info = task_info_map.get(&key).unwrap().clone();
       if task_info.status == TaskStatus::Proven {
           return;
       }
+      drop(task_info_map);
 
       set_small_proof_status_and_percentage("demo", &task_info.task_id, &task_info.split_id, "proven", 1.0/SEG_NUM as f64).await.unwrap();
       update_task_status(&task_info.project_id, &task_info.task_id, &task_info.split_id, "proven").await.unwrap();
+      let task_info_map = TASK_INFO.lock().await;
       let mut all_proven = true;
       for i in 0..SEG_NUM {
           let key = format!("{}-{}-{}", task_info.project_id, task_info.task_id, i);
@@ -1132,7 +1134,7 @@ pub async fn  process_task_data(msg: &ProvenTaskMessage)-> bool{
       add_small_proof("demo", &msg.task_key, &split_id.to_string()).await.unwrap();
 
       // Concat msg.task_key and split_id string with # charater, and get a new msg.task_key
-      let new_task_key = format!("{}#{}", msg.task_key, split_id.to_string());
+      let new_task_key = format!("{}@{}", msg.task_key, split_id.to_string());
 
       let request = RpcRequest {
           jsonrpc: "2.0".to_string(),
