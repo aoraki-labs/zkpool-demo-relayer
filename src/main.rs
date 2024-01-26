@@ -33,7 +33,7 @@ mod app_marco;
 
 pub async fn process_proof_data() {
     loop{
-        thread::sleep(time::Duration::from_secs(3));
+        thread::sleep(time::Duration::from_millis(100));
         match loop_proof_data().await{
             Ok(()) => (),
             Err(_) => {
@@ -45,7 +45,7 @@ pub async fn process_proof_data() {
 
 pub async fn process_task_data_loop() {
     loop{
-        thread::sleep(time::Duration::from_secs(3));
+        thread::sleep(time::Duration::from_millis(100));
         match loop_task_data().await{
             Ok(()) => (),
             Err(_) => {

@@ -939,7 +939,7 @@ pub async fn monitor_event(start_block_num:u64) {
           start_num = handle_block_num + 1;
           end_num = if world_num - handle_block_num > 10 { handle_block_num + 10 } else { world_num };
         }else {
-            thread::sleep(time::Duration::from_secs(2));
+            thread::sleep(time::Duration::from_millis(100));
             continue;
         }
 
@@ -1054,9 +1054,19 @@ pub async fn process_proof_data(msg: &ProofMessage){
 
       let task_id = tasks[0];
       let split_id = tasks[1];
-
       let task_info_map = TASK_INFO.lock().await;
       let key = format!("{}-{}-{}", "demo", task_id, split_id);
+      match task_info_map.get(&key) {
+        Some(task_info) => {
+          if task_info.status == TaskStatus::Proven {
+              return;
+          }
+        }
+        None => {
+         info!("error, no such task");
+        }
+      }
+
       let task_info = task_info_map.get(&key).unwrap().clone();
       if task_info.status == TaskStatus::Proven {
           return;
