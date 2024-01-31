@@ -9,7 +9,9 @@ RUN apt-get update && apt-get install -y \
     binutils \
     clang \
     golang \
+    openssl \
     libssl-dev \
+    ca-certificates \
     pkg-config \
     libpq-dev \ 
     curl \
@@ -27,5 +29,6 @@ RUN cargo build --release --target-dir /target && \
       mv /target/release/zkpool-demo-relayer / && rm -rf /target
 
 FROM ubuntu:22.04
+RUN apt-get update && apt-get install -y openssl ca-certificates && rm -rf /var/lib/apt/lists/*
 ENTRYPOINT ["/zkpool-demo-relayer"]
 COPY --from=builder /zkpool-demo-relayer /
