@@ -13,7 +13,8 @@
 // You should have received a copy of the GNU General Public License
 // along with the aoraki-labs library. If not, see <https://www.gnu.org/licenses/>.
 
-use std::{thread, time};
+use std::{thread};
+use tokio::time::{self, Duration};
 
 use chain::{monitor_event, loop_task_data};
 use log::*;
@@ -33,7 +34,7 @@ mod app_marco;
 
 pub async fn process_proof_data() {
     loop{
-        thread::sleep(time::Duration::from_millis(100));
+        time::sleep(Duration::from_secs(1)).await;
         match loop_proof_data().await{
             Ok(()) => (),
             Err(_) => {
@@ -45,7 +46,7 @@ pub async fn process_proof_data() {
 
 pub async fn process_task_data_loop() {
     loop{
-        thread::sleep(time::Duration::from_millis(100));
+        time::sleep(Duration::from_secs(1)).await;
         match loop_task_data().await{
             Ok(()) => (),
             Err(_) => {

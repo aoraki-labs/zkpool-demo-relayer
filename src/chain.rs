@@ -18,7 +18,7 @@ use ethereum_private_key_to_address::PrivateKey;
 use log::*;
 use web3::ethabi::FixedBytes;
 use std::thread;
-use std::time;
+use tokio::time::{self, Duration};
 use core::str;
 use rand::seq::SliceRandom;
 use serde_derive::{Deserialize,Serialize};
@@ -939,7 +939,7 @@ pub async fn monitor_event(start_block_num:u64) {
           start_num = handle_block_num + 1;
           end_num = if world_num - handle_block_num > 10 { handle_block_num + 10 } else { world_num };
         }else {
-            thread::sleep(time::Duration::from_millis(100));
+            time::sleep(Duration::from_secs(1)).await;
             continue;
         }
 
